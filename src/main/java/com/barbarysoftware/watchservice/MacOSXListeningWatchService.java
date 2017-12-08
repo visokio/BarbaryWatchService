@@ -1,14 +1,24 @@
 package com.barbarysoftware.watchservice;
 
-import com.barbarysoftware.jna.*;
-import com.sun.jna.NativeLong;
-import com.sun.jna.Pointer;
-
 import java.io.File;
 import java.io.IOException;
-import java.util.*;
+import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+
+import com.barbarysoftware.jna.CFArrayRef;
+import com.barbarysoftware.jna.CFIndex;
+import com.barbarysoftware.jna.CFRunLoopRef;
+import com.barbarysoftware.jna.CFStringRef;
+import com.barbarysoftware.jna.CarbonAPI;
+import com.barbarysoftware.jna.FSEventStreamRef;
+import com.sun.jna.NativeLong;
+import com.sun.jna.Pointer;
 
 /**
  * This class contains the bulk of my implementation of the Watch Service API. It hooks into Carbon's
@@ -131,6 +141,7 @@ class MacOSXListeningWatchService extends AbstractWatchService {
 
         private Function<File, Boolean> includeInRecursion = null;
         private boolean debug = false;
+        private DecimalFormat debugTimeFormat = new DecimalFormat("0.##");
 
         private MacOSXListeningCallback(
                 MacOSXWatchKey watchKey, 
@@ -151,15 +162,21 @@ class MacOSXListeningWatchService extends AbstractWatchService {
 
             for (String folderName : eventPaths.getStringArray(0, length)) {
 
+                long startTime = 0;
                 if (debug) {
-                    System.out.println("Running recursiveListFiles for: " + folderName);
+                    startTime = System.nanoTime();
+                    System.out.println("Start running recursiveListFiles for: " + folderName);
                 }
 
                 final Set<File> filesOnDisk = recursiveListFiles(new File(folderName), includeInRecursion);
 
                 if (debug) {
+                    double duration = (System.nanoTime() - startTime)/1000000.0;
+                   
                     System.out.println(
-                        "Result for recursiveListFiles: " + folderName + ", filesOnDisk: " + filesOnDisk.size()
+                        "Result for recursiveListFiles: " + folderName + 
+                        ", filesOnDisk: " + filesOnDisk.size() + 
+                        " (" + debugTimeFormat.format(duration)+ "ms) "
                     );
                 }
 

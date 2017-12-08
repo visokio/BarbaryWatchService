@@ -8,6 +8,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 /**
  * This class contains the bulk of my implementation of the Watch Service API. It hooks into Carbon's
@@ -17,6 +18,16 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 class MacOSXListeningWatchService extends AbstractWatchService {
 
+	private Function<File, Boolean> includeInRecursion = null;
+	private boolean debug = false;
+
+    public MacOSXListeningWatchService() {}
+
+    public MacOSXListeningWatchService(Function<File, Boolean> includeInRecursion, boolean debug) {
+        this.includeInRecursion = includeInRecursion;
+        this.debug = debug;
+    }
+
     // need to keep reference to callbacks to prevent garbage collection
     @SuppressWarnings({"MismatchedQueryAndUpdateOfCollection"})
     private final List<CarbonAPI.FSEventStreamCallback> callbackList = new ArrayList<CarbonAPI.FSEventStreamCallback>();
@@ -25,7 +36,7 @@ class MacOSXListeningWatchService extends AbstractWatchService {
     @Override
     WatchKey register(WatchableFile watchableFile, WatchEvent.Kind<?>[] events, WatchEvent.Modifier... modifers) throws IOException {
         final File file = watchableFile.getFile();
-        final Map<File, Long> lastModifiedMap = createLastModifiedMap(file);
+        final Map<File, Long> lastModifiedMap = createLastModifiedMap(file, includeInRecursion);
         final String s = file.getAbsolutePath();
         final Pointer[] values = {CFStringRef.toCFString(s).getPointer()};
         final CFArrayRef pathsToWatch = CarbonAPI.INSTANCE.CFArrayCreate(null, values, CFIndex.valueOf(1), null);
@@ -35,7 +46,7 @@ class MacOSXListeningWatchService extends AbstractWatchService {
 
         final long kFSEventStreamEventIdSinceNow = -1; //  this is 0xFFFFFFFFFFFFFFFF
         final int kFSEventStreamCreateFlagNoDefer = 0x00000002;
-        final CarbonAPI.FSEventStreamCallback callback = new MacOSXListeningCallback(watchKey, lastModifiedMap);
+        final CarbonAPI.FSEventStreamCallback callback = new MacOSXListeningCallback(watchKey, lastModifiedMap, includeInRecursion, debug);
         callbackList.add(callback);
         final FSEventStreamRef stream = CarbonAPI.INSTANCE.FSEventStreamCreate(
                 Pointer.NULL,
@@ -81,20 +92,23 @@ class MacOSXListeningWatchService extends AbstractWatchService {
         }
     }
 
-    private Map<File, Long> createLastModifiedMap(File file) {
+    private Map<File, Long> createLastModifiedMap(File file, Function<File, Boolean> includeInRecursion) {
         Map<File, Long> lastModifiedMap = new ConcurrentHashMap<File, Long>();
-        for (File child : recursiveListFiles(file)) {
+        for (File child : recursiveListFiles(file, includeInRecursion)) {
             lastModifiedMap.put(child, child.lastModified());
         }
         return lastModifiedMap;
     }
 
-    private static Set<File> recursiveListFiles(File file) {
+    private static Set<File> recursiveListFiles(File file, Function<File, Boolean> includeInRecursion) {
         Set<File> files = new HashSet<File>();
+
+        if (includeInRecursion != null && !includeInRecursion.apply(file)) return files;
+
         files.add(file);
         if (file.isDirectory()) {
             for (File child : file.listFiles()) {
-                files.addAll(recursiveListFiles(child));
+                files.addAll(recursiveListFiles(child, includeInRecursion));
             }
         }
         return files;
@@ -115,16 +129,39 @@ class MacOSXListeningWatchService extends AbstractWatchService {
         private final MacOSXWatchKey watchKey;
         private final Map<File, Long> lastModifiedMap;
 
-        private MacOSXListeningCallback(MacOSXWatchKey watchKey, Map<File, Long> lastModifiedMap) {
+        private Function<File, Boolean> includeInRecursion = null;
+        private boolean debug = false;
+
+        private MacOSXListeningCallback(
+                MacOSXWatchKey watchKey, 
+                Map<File, Long> lastModifiedMap,
+
+                Function<File, Boolean> includeInRecursion, 
+                boolean debug
+        ) {
             this.watchKey = watchKey;
             this.lastModifiedMap = lastModifiedMap;
+
+            this.includeInRecursion = includeInRecursion;
+            this.debug = debug;
         }
 
         public void invoke(FSEventStreamRef streamRef, Pointer clientCallBackInfo, NativeLong numEvents, Pointer eventPaths, Pointer /* array of unsigned int */ eventFlags, /* array of unsigned long */ Pointer eventIds) {
             final int length = numEvents.intValue();
 
             for (String folderName : eventPaths.getStringArray(0, length)) {
-                final Set<File> filesOnDisk = recursiveListFiles(new File(folderName));
+
+                if (debug) {
+                    System.out.println("Running recursiveListFiles for: " + folderName);
+                }
+
+                final Set<File> filesOnDisk = recursiveListFiles(new File(folderName), includeInRecursion);
+
+                if (debug) {
+                    System.out.println(
+                        "Result for recursiveListFiles: " + folderName + ", filesOnDisk: " + filesOnDisk.size()
+                    );
+                }
 
                 final List<File> createdFiles = findCreatedFiles(filesOnDisk);
                 final List<File> modifiedFiles = findModifiedFiles(filesOnDisk);

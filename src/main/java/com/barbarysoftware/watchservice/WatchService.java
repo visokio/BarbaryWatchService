@@ -1,8 +1,10 @@
 package com.barbarysoftware.watchservice;
 
 import java.io.Closeable;
+import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 public abstract class WatchService implements Closeable {
 
@@ -63,6 +65,10 @@ public abstract class WatchService implements Closeable {
     public abstract WatchKey take() throws InterruptedException;
 
     public static WatchService newWatchService() {
+        return newWatchService(null, false);
+    }
+    
+    public static WatchService newWatchService(Function<File, Boolean> includeInRecursion, boolean debug) {
         final String osVersion = System.getProperty("os.version");
         final int minorVersion = Integer.parseInt(osVersion.split("\\.")[1]);
         if (minorVersion < 5) {
@@ -71,7 +77,7 @@ public abstract class WatchService implements Closeable {
             
         } else {
             // for Mac OS X Leopard (10.5) and upwards
-            return new MacOSXListeningWatchService();
+            return new MacOSXListeningWatchService(includeInRecursion, debug);
         }
     }
 

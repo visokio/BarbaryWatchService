@@ -30,19 +30,22 @@ class MacOSXListeningWatchService extends AbstractWatchService {
 
     private Function<File, Boolean> includeDirInRecursion = null;
     private Function<File, Boolean> invokeOnDirChange = null;	
+    private int warningOnMaxNumOfWatchedFiles;
 	private boolean debug = false;
 
     public MacOSXListeningWatchService() {
-        this(null, null, false);
+        this(null, null, 0, false);
     }
 
     public MacOSXListeningWatchService(
             Function<File, Boolean> includeDirInRecursion, 
             Function<File, Boolean> invokeOnDirChange, 
+            int warningOnMaxNumOfWatchedFiles,
             boolean debug
     ) {
         this.includeDirInRecursion = includeDirInRecursion;
         this.invokeOnDirChange = invokeOnDirChange;
+        this.warningOnMaxNumOfWatchedFiles = warningOnMaxNumOfWatchedFiles;
         this.debug = debug;
     }
 
@@ -60,6 +63,10 @@ class MacOSXListeningWatchService extends AbstractWatchService {
             System.out.println("MacOSXListeningWatchService.register: " + file.getAbsolutePath() + ", " + lastModifiedMap.size() + " files registered");
         }
         
+        if (warningOnMaxNumOfWatchedFiles > 0 && lastModifiedMap.size() > warningOnMaxNumOfWatchedFiles) {
+            System.err.println("MacOSXListeningWatchService: maximum number of files exceeded - " + lastModifiedMap.size() + " files");
+        }
+        
         final String s = file.getAbsolutePath();
         final Pointer[] values = {CFStringRef.toCFString(s).getPointer()};
         final CFArrayRef pathsToWatch = CarbonAPI.INSTANCE.CFArrayCreate(null, values, CFIndex.valueOf(1), null);
@@ -69,7 +76,7 @@ class MacOSXListeningWatchService extends AbstractWatchService {
 
         final long kFSEventStreamEventIdSinceNow = -1; //  this is 0xFFFFFFFFFFFFFFFF
         final int kFSEventStreamCreateFlagNoDefer = 0x00000002;
-        final CarbonAPI.FSEventStreamCallback callback = new MacOSXListeningCallback(watchKey, lastModifiedMap, includeDirInRecursion, invokeOnDirChange, debug);
+        final CarbonAPI.FSEventStreamCallback callback = new MacOSXListeningCallback(watchKey, lastModifiedMap, includeDirInRecursion, invokeOnDirChange, warningOnMaxNumOfWatchedFiles, debug);
         callbackList.add(callback);
         final FSEventStreamRef stream = CarbonAPI.INSTANCE.FSEventStreamCreate(
                 Pointer.NULL,
@@ -154,6 +161,7 @@ class MacOSXListeningWatchService extends AbstractWatchService {
 
         private Function<File, Boolean> includeDirInRecursion = null;
         private Function<File, Boolean> invokeOnDirChange = null;
+        private int warningOnMaxNumOfWatchedFiles;
         private boolean debug = false;
         private DecimalFormat debugTimeFormat = new DecimalFormat("0.##");
 
@@ -163,6 +171,7 @@ class MacOSXListeningWatchService extends AbstractWatchService {
 
                 Function<File, Boolean> includeDirInRecursion,
                 Function<File, Boolean> invokeOnDirChange,
+                int warningOnMaxNumOfWatchedFiles,
                 boolean debug
         ) {
             this.watchKey = watchKey;
@@ -170,6 +179,7 @@ class MacOSXListeningWatchService extends AbstractWatchService {
 
             this.includeDirInRecursion = includeDirInRecursion;
             this.invokeOnDirChange = invokeOnDirChange;
+            this.warningOnMaxNumOfWatchedFiles = warningOnMaxNumOfWatchedFiles;
             this.debug = debug;
         }
 
@@ -203,6 +213,10 @@ class MacOSXListeningWatchService extends AbstractWatchService {
                         ", filesOnDisk: " + filesOnDisk.size() + 
                         " (" + debugTimeFormat.format(duration)+ "ms) "
                     );
+                }
+                
+                if (warningOnMaxNumOfWatchedFiles > 0 && filesOnDisk.size() > warningOnMaxNumOfWatchedFiles) {
+                    System.err.println("MacOSXListeningCallback: maximum number of files exceeded - " + lastModifiedMap.size() + " files");
                 }
 
                 final List<File> createdFiles = findCreatedFiles(filesOnDisk);

@@ -65,10 +65,19 @@ public abstract class WatchService implements Closeable {
     public abstract WatchKey take() throws InterruptedException;
 
     public static WatchService newWatchService() {
-        return newWatchService(null, null, false);
+        return newWatchService(null, null, 0, false);
     }
     
-    public static WatchService newWatchService(Function<File, Boolean> includeDirInRecursion, Function<File, Boolean> invokeOnDirChange, boolean debug) {
+    /**
+     * @param includeDirInRecursion - allows to filter out undesired sub-directories (e.d. node_modules),
+     *                              if NULL then all sub-directories will be included,
+     *                              if specified and returns FALSE then the directory and all sub-directories will be excluded   
+     * @param invokeOnDirChange - allows to ignore changes on particular directories
+     * @param warningOnMaxNumOfWatchedFiles - if more than 0 then prints a warning if number of watched files exceeds this number 
+     * @param debug - set to TRUE to log information about watched files
+     * @return
+     */
+    public static WatchService newWatchService(Function<File, Boolean> includeDirInRecursion, Function<File, Boolean> invokeOnDirChange, int warningOnMaxNumOfWatchedFiles, boolean debug) {        
         final String osVersion = System.getProperty("os.version");
         final int minorVersion = Integer.parseInt(osVersion.split("\\.")[1]);
         if (minorVersion < 5) {
@@ -77,7 +86,7 @@ public abstract class WatchService implements Closeable {
             
         } else {
             // for Mac OS X Leopard (10.5) and upwards
-            return new MacOSXListeningWatchService(includeDirInRecursion, invokeOnDirChange, debug);
+            return new MacOSXListeningWatchService(includeDirInRecursion, invokeOnDirChange, warningOnMaxNumOfWatchedFiles, debug);
         }
     }
 

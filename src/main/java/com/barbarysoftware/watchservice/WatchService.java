@@ -65,10 +65,10 @@ public abstract class WatchService implements Closeable {
     public abstract WatchKey take() throws InterruptedException;
 
     public static WatchService newWatchService() {
-        return newWatchService(null, false);
+        return newWatchService(null, null, false);
     }
     
-    public static WatchService newWatchService(Function<File, Boolean> includeInRecursion, boolean debug) {
+    public static WatchService newWatchService(Function<File, Boolean> includeDirInRecursion, Function<File, Boolean> invokeOnDirChange, boolean debug) {
         final String osVersion = System.getProperty("os.version");
         final int minorVersion = Integer.parseInt(osVersion.split("\\.")[1]);
         if (minorVersion < 5) {
@@ -77,7 +77,7 @@ public abstract class WatchService implements Closeable {
             
         } else {
             // for Mac OS X Leopard (10.5) and upwards
-            return new MacOSXListeningWatchService(includeInRecursion, debug);
+            return new MacOSXListeningWatchService(includeDirInRecursion, invokeOnDirChange, debug);
         }
     }
 

@@ -28,13 +28,21 @@ import com.sun.jna.Pointer;
  */
 class MacOSXListeningWatchService extends AbstractWatchService {
 
-	private Function<File, Boolean> includeInRecursion = null;
+    private Function<File, Boolean> includeDirInRecursion = null;
+    private Function<File, Boolean> invokeOnDirChange = null;	
 	private boolean debug = false;
 
-    public MacOSXListeningWatchService() {}
+    public MacOSXListeningWatchService() {
+        this(null, null, false);
+    }
 
-    public MacOSXListeningWatchService(Function<File, Boolean> includeInRecursion, boolean debug) {
-        this.includeInRecursion = includeInRecursion;
+    public MacOSXListeningWatchService(
+            Function<File, Boolean> includeDirInRecursion, 
+            Function<File, Boolean> invokeOnDirChange, 
+            boolean debug
+    ) {
+        this.includeDirInRecursion = includeDirInRecursion;
+        this.invokeOnDirChange = invokeOnDirChange;
         this.debug = debug;
     }
 
@@ -46,7 +54,12 @@ class MacOSXListeningWatchService extends AbstractWatchService {
     @Override
     WatchKey register(WatchableFile watchableFile, WatchEvent.Kind<?>[] events, WatchEvent.Modifier... modifers) throws IOException {
         final File file = watchableFile.getFile();
-        final Map<File, Long> lastModifiedMap = createLastModifiedMap(file, includeInRecursion);
+        final Map<File, Long> lastModifiedMap = createLastModifiedMap(file, includeDirInRecursion);
+        
+        if (debug) {
+            System.out.println("MacOSXListeningWatchService.register: " + file.getAbsolutePath() + ", " + lastModifiedMap.size() + " files registered");
+        }
+        
         final String s = file.getAbsolutePath();
         final Pointer[] values = {CFStringRef.toCFString(s).getPointer()};
         final CFArrayRef pathsToWatch = CarbonAPI.INSTANCE.CFArrayCreate(null, values, CFIndex.valueOf(1), null);
@@ -56,7 +69,7 @@ class MacOSXListeningWatchService extends AbstractWatchService {
 
         final long kFSEventStreamEventIdSinceNow = -1; //  this is 0xFFFFFFFFFFFFFFFF
         final int kFSEventStreamCreateFlagNoDefer = 0x00000002;
-        final CarbonAPI.FSEventStreamCallback callback = new MacOSXListeningCallback(watchKey, lastModifiedMap, includeInRecursion, debug);
+        final CarbonAPI.FSEventStreamCallback callback = new MacOSXListeningCallback(watchKey, lastModifiedMap, includeDirInRecursion, invokeOnDirChange, debug);
         callbackList.add(callback);
         final FSEventStreamRef stream = CarbonAPI.INSTANCE.FSEventStreamCreate(
                 Pointer.NULL,
@@ -102,23 +115,23 @@ class MacOSXListeningWatchService extends AbstractWatchService {
         }
     }
 
-    private Map<File, Long> createLastModifiedMap(File file, Function<File, Boolean> includeInRecursion) {
+    private Map<File, Long> createLastModifiedMap(File file, Function<File, Boolean> includeDirInRecursion) {
         Map<File, Long> lastModifiedMap = new ConcurrentHashMap<File, Long>();
-        for (File child : recursiveListFiles(file, includeInRecursion)) {
+        for (File child : recursiveListFiles(file, includeDirInRecursion)) {
             lastModifiedMap.put(child, child.lastModified());
         }
         return lastModifiedMap;
     }
 
-    private static Set<File> recursiveListFiles(File file, Function<File, Boolean> includeInRecursion) {
+    private static Set<File> recursiveListFiles(File file, Function<File, Boolean> includeDirInRecursion) {
         Set<File> files = new HashSet<File>();
 
-        if (includeInRecursion != null && !includeInRecursion.apply(file)) return files;
+        if (includeDirInRecursion != null && !includeDirInRecursion.apply(file)) return files;
 
         files.add(file);
         if (file.isDirectory()) {
             for (File child : file.listFiles()) {
-                files.addAll(recursiveListFiles(child, includeInRecursion));
+                files.addAll(recursiveListFiles(child, includeDirInRecursion));
             }
         }
         return files;
@@ -139,7 +152,8 @@ class MacOSXListeningWatchService extends AbstractWatchService {
         private final MacOSXWatchKey watchKey;
         private final Map<File, Long> lastModifiedMap;
 
-        private Function<File, Boolean> includeInRecursion = null;
+        private Function<File, Boolean> includeDirInRecursion = null;
+        private Function<File, Boolean> invokeOnDirChange = null;
         private boolean debug = false;
         private DecimalFormat debugTimeFormat = new DecimalFormat("0.##");
 
@@ -147,13 +161,15 @@ class MacOSXListeningWatchService extends AbstractWatchService {
                 MacOSXWatchKey watchKey, 
                 Map<File, Long> lastModifiedMap,
 
-                Function<File, Boolean> includeInRecursion, 
+                Function<File, Boolean> includeDirInRecursion,
+                Function<File, Boolean> invokeOnDirChange,
                 boolean debug
         ) {
             this.watchKey = watchKey;
             this.lastModifiedMap = lastModifiedMap;
 
-            this.includeInRecursion = includeInRecursion;
+            this.includeDirInRecursion = includeDirInRecursion;
+            this.invokeOnDirChange = invokeOnDirChange;
             this.debug = debug;
         }
 
@@ -162,19 +178,28 @@ class MacOSXListeningWatchService extends AbstractWatchService {
 
             for (String folderName : eventPaths.getStringArray(0, length)) {
 
+                File folder = new File(folderName);
+                
+                if (invokeOnDirChange != null && !invokeOnDirChange.apply(folder)) {
+                    if (debug) {
+                        System.out.println("MacOSXListeningCallback.invoke: ignoring: " + folderName);
+                    }
+                    continue;
+                }
+
                 long startTime = 0;
                 if (debug) {
                     startTime = System.nanoTime();
-                    System.out.println("Start running recursiveListFiles for: " + folderName);
+                    System.out.println("MacOSXListeningCallback.invoke: start running recursiveListFiles for: " + folderName);
                 }
-
-                final Set<File> filesOnDisk = recursiveListFiles(new File(folderName), includeInRecursion);
+                
+                final Set<File> filesOnDisk = recursiveListFiles(folder, includeDirInRecursion);
 
                 if (debug) {
                     double duration = (System.nanoTime() - startTime)/1000000.0;
                    
                     System.out.println(
-                        "Result for recursiveListFiles: " + folderName + 
+                        "MacOSXListeningCallback.invoke: result for recursiveListFiles: " + folderName + 
                         ", filesOnDisk: " + filesOnDisk.size() + 
                         " (" + debugTimeFormat.format(duration)+ "ms) "
                     );
